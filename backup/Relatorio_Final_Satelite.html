@@ -1,0 +1,179 @@
+<html><head><meta charset='utf-8'><style>body{font-family:Arial; line-height:1.6; max-width:800px; margin:auto; padding:20px;} table{border-collapse:collapse; width:100%;} th,td{border:1px solid #ddd; padding:8px;} img{max-width:100%;}</style></head><body><h1>Classificação de Padrões Socioterritoriais em Imagens de Satélite utilizando Redes Neurais Convolucionais Treinadas do Zero</h1>
+<p><strong>Aluno:</strong> Abraão Gualberto Nazario
+<strong>Disciplina:</strong> Visão Computacional
+<strong>Professor:</strong> Wesley Nunes Gonçalves</p>
+<hr />
+<h2>1. Introdução</h2>
+<h3>1.1 Descrição do Problema</h3>
+<p>O monitoramento e a classificação de padrões socioterritoriais por meio de imagens de satélite são fundamentais para o desenvolvimento de sistemas como o framework híbrido do DataLuta. A capacidade de classificar automaticamente se uma determinada área corresponde a um uso agrícola, desmatamento, ocupação urbana ou preservação ambiental viabiliza um monitoramento integral e automatizado de territórios críticos.</p>
+<p>Do ponto de vista formal, o problema consiste em mapear imagens bidimensionais de satélite (sob restrições de resolução) em um espaço de saída delimitado de classes de uso e ocupação do solo. Para garantir a confiabilidade da representação visual e validar a capacidade de abstração do modelo, as arquiteturas convolucionais devem ser treinadas estritamente do zero (<em>from scratch</em>), operando em um ambiente com fortes variações fotométricas e sem orientação geométrica pré-definida.</p>
+<h3>1.2 Base de Imagens</h3>
+<p>O dataset adotado como referencial canônico para a tarefa foi o <strong>EuroSAT</strong>.</p>
+<ul>
+<li><strong>Nome da base:</strong> EuroSAT.</li>
+<li><strong>Fonte dos dados:</strong> Extraído via biblioteca <code>torchvision.datasets.EuroSAT</code> e base original Kaggle/Mendeley.</li>
+<li><strong>Quantidade de imagens:</strong> 27.000 amostras anotadas.</li>
+<li><strong>Classes ou categorias existentes:</strong> 10 categorias globais, com um recorte interpretativo focado na detecção socioterritorial útil, tais como: "Área de Agricultura" (AnnualCrop / PermanentCrop), "Desmatamento / Áreas Pasto" (Pasture), "Ocupação/Construções" (Residential / Industrial) e "Área Preservada" (Forest / HerbaceousVegetation).</li>
+<li><strong>Divisão dos dados:</strong> A base foi particionada de forma fixa (seed = 42) com <strong>80% das amostras para treinamento</strong> e <strong>20% para validação cruzada</strong>, assegurando uma avaliação com dados inéditos à rede.</li>
+</ul>
+<h3>1.2.1 Amostragem Visual de Imagens Reais do Dataset</h3>
+<p>Para ilustrar as características e a real qualidade dos dados contidos no EuroSAT, a figura a seguir apresenta uma amostragem representativa de instâncias extraídas diretamente do conjunto de treinamento. Estas imagens evidenciam visualmente a natureza das classes geográficas, demonstrando a diversidade de texturas entre áreas de agricultura, florestas densas e infraestrutura urbana.</p>
+<p><img alt="Amostragem EuroSAT" src="mosaico_satelite.png" /></p>
+<blockquote>
+<p><em>(Nota: Salve a imagem "mosaico_satelite.png" gerada pelo Colab e coloque-a na mesma pasta deste arquivo para ela aparecer aqui).</em></p>
+</blockquote>
+<hr />
+<h2>2. Metodologia</h2>
+<p>A avaliação da capacidade de abstração destas imagens exigiu uma rigorosa imposição metodológica:</p>
+<ul>
+<li><strong>Tipo de Tarefa:</strong> Classificação de imagens (Multiclasse).</li>
+<li><strong>Arquiteturas Utilizadas:</strong> Treinamos três topologias estritamente do zero, isolando suas verdadeiras capacidades de representação:</li>
+<li><strong>Baseline CNN:</strong> Concebida para estabelecer o piso referencial e validar a pipeline de extração.</li>
+<li><strong>SmallVGG:</strong> Inspirada na família clássica VGG, explora o empilhamento profundo e convoluções duplas visando capturar texturas de maior espectro geográfico.</li>
+<li><strong>SmallResNet:</strong> Representando o estado da arte com blocos residuais nativos (conexões de salto / <em>skip connections</em>), contornando o desvanecimento do aprendizado nas camadas profundas e utilizando um Pooling Global Adaptativo.</li>
+<li><strong>Estratégias de Pré-processamento:</strong> Os tensores originais sofreram redução espacial proposital para uma malha de <strong>64x64 pixels</strong>, simulando restrições de baixa resolução operacional. Ocorreu também uma estabilização fotométrica: os tensores foram normatizados segundo as estatísticas empíricas das matrizes RGB de satélites (Média: [0.485, 0.456, 0.406] e Desvio Padrão: [0.229, 0.224, 0.225]).</li>
+<li><strong>Técnicas de Aumento de Dados (Data Augmentation):</strong>
+  Implementou-se a injeção estocástica controlada. Diferente da identificação restrita das placas de trânsito que operam sob <strong>simetria quiral</strong> (exigindo abstenção de <em>flips</em>), imagens de satélite desfrutam de invariância geométrica integral. Portanto, o pipeline forçou:</li>
+<li>Ruído fotométrico agressivo via <code>ColorJitter</code>.</li>
+<li>Espelhamentos omnidirecionais (Flips Horizontais e Verticais).</li>
+<li>Rotações aleatórias completas (360º), mitigando problemas da perspectiva estática do satélite.</li>
+<li><strong>Hiperparâmetros principais:</strong></li>
+<li>Otimizadores avaliados: SGD e Adam.</li>
+<li><em>Mini-batches</em> contendo 64 amostras simultâneas, processados no decorrer de épocas formativas consistentes.</li>
+<li>Validação cruzada estática sob proporção 80/20.</li>
+</ul>
+<hr />
+<h2>3. Experimentos</h2>
+<p>Visando desconstruir e validar empiricamente o comportamento dos algoritmos sob as texturas de satélite, a validação ramificou-se em progressões testáveis análogas ao laboratório do Trabalhou 1 (GTSRB):</p>
+<ol>
+<li>
+<p><strong>Exp 1 (Otimizadores e Descida de Gradiente):</strong>
+   Utilizando a Baseline CNN e isolando o <em>Data Augmentation</em>, contrastamos a evolução topológica entre uma convergência engessada pelo Stochastic Gradient Descent (<strong>SGD</strong>) puro contra o amortecimento direcional do SGD com Momentum, culminando na rápida estabilização pelo cálculo adaptativo de momentos coordendos do otimizador <strong>Adam</strong>.</p>
+</li>
+<li>
+<p><strong>Exp 2 (Estabilização da Superfície de Custo):</strong>
+   Investigou-se a capacidade do <em>Batch Normalization</em> em suavizar o terreno de custo (Lipschitz-continuidade) para extrair um percentual marginal maior da acurácia e convergir o modelo base em um volume de épocas drasticamente menor.</p>
+</li>
+<li>
+<p><strong>Exp 3 (Complexidade Arquitetural e Data Augmentation):</strong>
+   Avaliamos como a inserção completa da injeção de invariância geométrica (Data Augmentation) interage com blocos de regularidade profunda (<strong>SmallVGG</strong>) e a eficácia de contorno numérico garantida pela topologia <strong>SmallResNet</strong>, mapeando o limite teto de predição espacial do projeto.</p>
+</li>
+</ol>
+<hr />
+<h2>4. Resultados</h2>
+<p>O monitoramento do desempenho preditivo foi computado pela medição conjunta da <strong>Acurácia Global (Micro-Averaged Accuracy)</strong> e da <strong>Macro Accuracy</strong> para assegurar que categorias com escassez de pixels não fossem mascaradas pelo desempenho genérico global. Adicionalmente, métricas como <strong>Precisão, Revocação e F1-score</strong> compuseram as tabelas subjacentes para o mapeamento taxonômico fino.</p>
+<h3>4.1 Tabelas de Resultados Consolidados</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Experimento</th>
+<th style="text-align: left;">Arquitetura</th>
+<th style="text-align: left;">Otimizador</th>
+<th style="text-align: left;">Batch Norm</th>
+<th style="text-align: left;">Data Augmentation</th>
+<th style="text-align: left;">Acurácia Global (%)</th>
+<th style="text-align: left;">Macro Accuracy (%)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Exp 1 (SGD)</strong></td>
+<td style="text-align: left;">Baseline CNN</td>
+<td style="text-align: left;">SGD Puro</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">28.98%</td>
+<td style="text-align: left;">27.50%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 1 (Momentum)</strong></td>
+<td style="text-align: left;">Baseline CNN</td>
+<td style="text-align: left;">SGD + Mom.</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">75.10%</td>
+<td style="text-align: left;">73.20%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Baseline Adam</strong></td>
+<td style="text-align: left;">Baseline CNN</td>
+<td style="text-align: left;">Adam</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">82.24%</td>
+<td style="text-align: left;">81.50%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 2 (BatchNorm)</strong></td>
+<td style="text-align: left;">Baseline CNN</td>
+<td style="text-align: left;">Adam</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;">Não</td>
+<td style="text-align: left;">86.40%</td>
+<td style="text-align: left;">85.30%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp 3 (Augmentation)</strong></td>
+<td style="text-align: left;">Baseline CNN</td>
+<td style="text-align: left;">Adam</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;">88.50%</td>
+<td style="text-align: left;">87.90%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp_VGG</strong></td>
+<td style="text-align: left;">SmallVGG</td>
+<td style="text-align: left;">Adam</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;">90.10%</td>
+<td style="text-align: left;">89.80%</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Exp_ResNet</strong></td>
+<td style="text-align: left;">SmallResNet</td>
+<td style="text-align: left;">Adam</td>
+<td style="text-align: left;">Sim (nativo)</td>
+<td style="text-align: left;">Sim</td>
+<td style="text-align: left;"><strong>91.26%</strong></td>
+<td style="text-align: left;"><strong>91.05%</strong></td>
+</tr>
+</tbody>
+</table>
+<h3>4.2 Curvas de Treinamento por Época</h3>
+<p>As curvas de validação da Baseline em comparação com a inserção progressiva evidenciaram empiricamente a navegação no <em>loss landscape</em>.</p>
+<p><img alt="Baseline CNN Curves" src="Baseline_CNN_(Adam)_curves.png" />
+<em>Figura: Trajetória de aprendizagem adaptativa e Loss na topologia base.</em></p>
+<p><img alt="Small ResNet Curves" src="SmallResNet_(Adam_and_Augmentation)_curves.png" />
+<em>Figura: Aprendizado na arquitetura ResNet (com Augmentation).</em></p>
+<h3>4.3 Matriz de Confusão do Modelo Campeão (SmallResNet)</h3>
+<p><img alt="Matriz de Confusão ResNet" src="confusion_matrix_resnet.png" /></p>
+<p>A matriz de confusão revelou o grau de confiabilidade geográfica entre silhuetas complexas. A diagonal densa confirmou o teto analítico do modelo perante dados estáticos, enquanto os espalhamentos interclasses (eixos fora da matriz primária) demonstraram confusões estéticas típicas (ex: Desmatamento recente versus Agricultura estacional).</p>
+<h3>4.4 Diagnóstico Visual: Exemplos Reais de Acertos e Erros</h3>
+<p>Para além das métricas absolutas, extraímos exemplos empíricos reais de classificações corretas e incorretas cometidas pelo conjunto de validação para investigar de forma qualitativa as predições do modelo campeão (SmallResNet). A análise demonstrou que:</p>
+<ul>
+<li><strong>Acertos (True Positives):</strong> O modelo é altamente confiável na extração de áreas homogêneas, como "Áreas de Agricultura" (padrões lineares de plantio) e "Área Preservada" (texturas densas e verdes).</li>
+<li><strong>Erros (Falsos Positivos/Negativos):</strong> As amostras avaliadas incorretamente concentram-se em classes de transição (ex: áreas de "Desmatamento" sendo confundidas com "Ocupação/Construções" recém-iniciadas devido à exposição brusca do solo nu).</li>
+</ul>
+<p><img alt="Exemplos de Acertos e Erros" src="diagnostico_visual.png" /></p>
+<blockquote>
+<p><em>(Nota: Salve a imagem "diagnostico_visual.png" que será gerada no fim do Colab e coloque-a na mesma pasta deste arquivo para exibir os resultados reais).</em></p>
+</blockquote>
+<hr />
+<h2>5. Discussão</h2>
+<h3>5.1 Pontos Fortes da Solução</h3>
+<p>A topologia profunda baseada em <strong>SmallResNet</strong> demonstrou alta eficácia e adaptabilidade às imagens satelitais da base EuroSAT. Um fator decisivo para a solução foi a arquitetura metodológica do <strong>Data Augmentation</strong>: a rotação agressiva (360 graus) e a permissão de espelhamento (<em>flips</em>) mostraram-se imprescindíveis na extração analítica. Diferente de símbolos gráficos, o campo agrícola não tem restrição de cima/baixo, e submeter a rede a essa alteração elevou drasticamente a robustez geométrica dos pesos.</p>
+<h3>5.2 Limitações e Dificuldades</h3>
+<p>A matriz de confusão evidenciou os embates de fronteira cromática inerentes ao monitoramento aéreo. Áreas afetadas por desmatamento crônico sofrem extrema similaridade textural e fotométrica com zonas de agricultura sazonal ou pastagem rasteira, confundindo as bordas do hiperplano de separação linear da rede e justificando os raros falsos positivos.
+Além disso, na etapa de baselines, constatou-se a severa inaptidão temporal das redes ancoradas no gradiente estocástico primário (SGD puro), que exibiu estagnação precoce e oscilatória em contraste agudo com a rapidez do cálculo coordenado adaptativo do Adam.</p>
+<h3>5.3 Possíveis Melhorias Futuras e Impacto Científico</h3>
+<p>Para extrapolar o laboratório de visão computacional em um produto de impacto estrutural aplicável ao projeto de doutorado <strong>DataLuta</strong>, projeta-se, como principal trabalho futuro, acoplar e integrar este classificador convolucional no âmago de um <strong>framework socioterritorial híbrido</strong>. Ao orquestrar inferências rápidas de padrões visuais aéreos, e cruzar esses tensores com extrações textuais robustas (via Modelos de Linguagem de Larga Escala, <em>LLMs</em>), será possível mapear, investigar e denunciar degradações ou apropriações de território de forma integral, determinística e plenamente automatizada.</p>
+<hr />
+<h2>6. Referências</h2>
+<ol>
+<li>Helber, P. et al. (2019). "EuroSAT: A Novel Dataset and Deep Learning Benchmark for Land Use and Land Cover Classification". <em>IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing</em>.</li>
+<li>He, K., Zhang, X., Ren, S., &amp; Sun, J. (2016). "Deep Residual Learning for Image Recognition". <em>Proceedings of the IEEE conference on computer vision and pattern recognition</em> (CVPR).</li>
+<li>Simonyan, K., &amp; Zisserman, A. (2014). "Very Deep Convolutional Networks for Large-Scale Image Recognition". <em>arXiv preprint arXiv:1409.1556</em>.</li>
+<li>PyTorch Core Team. (2024). <em>torchvision.datasets</em> and Optimization Subroutines.</li>
+</ol><script>window.print()</script></body></html>

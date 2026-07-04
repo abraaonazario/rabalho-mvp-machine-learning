@@ -1,0 +1,424 @@
+================================================================================
+REQUISITOS — VERSÃO 2.0
+Projeto: Classificação de Padrões Socioterritoriais em Imagens de Satélite
+Disciplina: Visão Computacional — Doutorado
+Aluno: Abraão Gualberto Nazario
+Data: 2026-07-04
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+CONTEXTO E MOTIVAÇÃO DA VERSÃO 2.0
+────────────────────────────────────────────────────────────────────────────────
+
+A versão 1.0 do projeto estabeleceu com sucesso uma base experimental completa:
+  - Três arquiteturas CNN treinadas do zero (BaselineCNN, SmallVGG, SmallResNet)
+  - Pipeline de Data Augmentation específico para imagens de satélite
+  - Avaliação comparativa com acurácia máxima de 91.26% (SmallResNet + Adam + Aug.)
+  - Código modular em Python/PyTorch organizado em src/
+
+A versão 2.0 tem como objetivo evoluir o projeto de uma prova de conceito acadêmica
+para um sistema mais robusto, reproduzível e próximo de uma aplicação real no
+contexto do projeto DataLuta. As melhorias abordam lacunas identificadas na análise
+do código existente, nas limitações reportadas no Relatório Final e nos requisitos
+de escalabilidade para o doutorado.
+
+================================================================================
+PARTE I — DIAGNÓSTICO DA VERSÃO 1.0 (BASELINE)
+================================================================================
+
+1. PONTOS FORTES CONSOLIDADOS
+─────────────────────────────
+[+] Modularidade: código dividido em dataset.py, models.py, train.py, evaluate.py
+[+] Split estratificado correto (70/15/15) com semente fixa (seed=42)
+[+] Data Augmentation adequado ao domínio (rotação 360°, flips, ColorJitter)
+[+] Suporte a GPU via torch.device('cuda' if available else 'cpu')
+[+] WeightedRandomSampler implementado para lidar com desbalanceamento de classes
+[+] Métricas abrangentes: Acurácia, Precisão, Recall, F1-Score (macro-média)
+[+] Visualizações: curvas de treinamento, matriz de confusão, diagnóstico visual
+
+2. LACUNAS E PROBLEMAS IDENTIFICADOS NO CÓDIGO v1.0
+─────────────────────────────────────────────────────
+
+2.1 AUSÊNCIA DE EARLY STOPPING (CRÍTICO)
+   - O Relatório Final menciona early stopping, mas train.py NÃO implementa
+     nenhuma lógica de parada antecipada por critério de validação.
+   - Risco: overfitting não controlado em treinamentos longos.
+
+2.2 AUSÊNCIA DE SCHEDULER DE LEARNING RATE
+   - Nenhum scheduler (ReduceLROnPlateau, CosineAnnealingLR, etc.) é utilizado.
+   - Impacto: convergência subótima nas épocas finais.
+
+2.3 AUSÊNCIA DE SALVAMENTO DE CHECKPOINT DO MODELO
+   - Nenhum torch.save() é chamado durante ou após o treinamento.
+   - Risco: perda total do modelo treinado em caso de falha; impossibilidade de
+     retomar treinamento ou reutilizar o modelo sem re-treinar do zero.
+
+2.4 INCONSISTÊNCIA NO NÚMERO DE ÉPOCAS
+   - Relatório descreve 20-30 épocas. main.py usa epochs=15 para ambos os modelos.
+   - Impacto: resultados do Relatório podem não ser reproduzíveis pelo código atual.
+
+2.5 ENCODING CORROMPIDO NO requirements.txt
+   - O arquivo requirements.txt apresenta caracteres nulos (bytes nulos \0) na
+     linha do seaborn, indicando corrupção de encoding (provavelmente UTF-16).
+   - Impacto: pip install falha silenciosamente para o seaborn.
+
+2.6 AUSÊNCIA DE LOGGING ESTRUTURADO
+   - Uso exclusivo de print() para todo o acompanhamento do treinamento.
+   - Sem persistência de logs em arquivo; métricas se perdem após execução.
+
+2.7 SEM REPRODUTIBILIDADE GARANTIDA PARA GPU
+   - seed=42 para o split dos dados, mas torch.manual_seed() e
+     torch.cuda.manual_seed() não são configurados no início do pipeline.
+
+2.8 FALTA DE INTERFACE DE LINHA DE COMANDO (CLI)
+   - main.py não aceita argumentos; todas as configurações são hard-coded.
+   - Impacto: para qualquer experimento diferente é necessário editar o código-fonte.
+
+2.9 NORMALIZAÇÃO NÃO CALIBRADA PARA O EUROSAT
+   - Utiliza estatísticas do ImageNet (média/std RGB genérica) ao invés das
+     estatísticas reais do EuroSAT, que possui distribuição espectral diferente.
+
+2.10 SmallResNet COM APENAS 1 BLOCO RESIDUAL POR CAMADA
+    - _make_layer() cria apenas 1 ResidualBlock por layer (sem loop de repetição),
+      o que é uma arquitetura extremamente rasa para uma ResNet.
+
+
+================================================================================
+PARTE II — REQUISITOS FUNCIONAIS (RF) — VERSÃO 2.0
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+RF-01 :: EARLY STOPPING IMPLEMENTADO
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O loop de treinamento em train.py DEVE implementar early stopping baseado na
+  perda de validação (val_loss).
+
+Critérios de Aceitação:
+  - Parâmetro `patience` configurável (default: 10 épocas).
+  - Se val_loss não melhorar por `patience` épocas consecutivas, o treinamento
+    é interrompido automaticamente.
+  - O melhor estado do modelo (menor val_loss) é salvo internamente usando
+    model.state_dict() antes da parada.
+  - Mensagem informativa impressa/logada indicando a época em que ocorreu a parada.
+
+Arquivo a Modificar: src/train.py
+Prioridade: ALTA
+Referência: Seção 5.2 do Relatório Final (menção a early stopping)
+
+────────────────────────────────────────────────────────────────────────────────
+RF-02 :: SALVAMENTO E CARREGAMENTO DE CHECKPOINTS
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O sistema DEVE salvar o estado completo do modelo após o treinamento e permitir
+  o carregamento posterior para inferência ou fine-tuning.
+
+Critérios de Aceitação:
+  - Ao final de cada treinamento, salvar um arquivo .pth contendo:
+    {
+      'epoch': int,
+      'model_state_dict': ...,
+      'optimizer_state_dict': ...,
+      'val_acc': float,
+      'val_loss': float,
+      'class_names': list,
+      'architecture': str
+    }
+  - O nome do arquivo deve incluir arquitetura, otimizador e acurácia de validação.
+    Exemplo: "SmallResNet_adam_acc91.26.pth"
+  - Salvo no diretório ./checkpoints/ (criado automaticamente se não existir).
+  - Função load_checkpoint(path) em evaluate.py para inferência sem re-treino.
+
+Arquivo a Modificar: src/train.py, src/evaluate.py
+Prioridade: ALTA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-03 :: LEARNING RATE SCHEDULER
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O loop de treinamento DEVE suportar um scheduler de learning rate para melhorar
+  a convergência nas épocas finais.
+
+Critérios de Aceitação:
+  - Parâmetro `scheduler_type` em train_model(): 'none', 'plateau', 'cosine'.
+  - 'plateau': ReduceLROnPlateau com factor=0.5, patience=5, monitorando val_loss.
+  - 'cosine': CosineAnnealingLR com T_max=epochs.
+  - Learning rate atual logado/impresso ao longo do treinamento.
+
+Arquivo a Modificar: src/train.py
+Prioridade: MÉDIA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-04 :: INTERFACE DE LINHA DE COMANDO (CLI)
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  main.py DEVE aceitar argumentos de linha de comando para configurar o experimento
+  sem alterar o código-fonte.
+
+Critérios de Aceitação:
+  - Usar argparse ou equivalente.
+  - Argumentos mínimos obrigatórios:
+      --model         {baseline, vgg, resnet}  (default: resnet)
+      --optimizer     {sgd, momentum, adam}    (default: adam)
+      --epochs        int                      (default: 30)
+      --batch-size    int                      (default: 64)
+      --lr            float                    (default: 0.001)
+      --augmentation  flag (bool)              (default: True)
+      --scheduler     {none, plateau, cosine}  (default: plateau)
+      --patience      int                      (default: 10)
+      --data-dir      str                      (default: ./data)
+      --output-dir    str                      (default: ./outputs)
+      --seed          int                      (default: 42)
+  - Exibir help message com --help.
+  - Salvar configuração do experimento em JSON no diretório de saída.
+
+Arquivo a Modificar: src/main.py
+Prioridade: ALTA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-05 :: LOGGING ESTRUTURADO EM ARQUIVO
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O sistema DEVE registrar todas as métricas de treinamento em arquivo para
+  análise posterior e reprodutibilidade.
+
+Critérios de Aceitação:
+  - Utilizar o módulo logging do Python (nível INFO como padrão).
+  - Log gerado em ./outputs/<timestamp>_<model>_<optimizer>/training.log.
+  - Métricas por época (train_loss, train_acc, val_loss, val_acc, lr_atual)
+    salvas em formato CSV: ./outputs/<run_id>/metrics.csv.
+  - Configuração do experimento salva em: ./outputs/<run_id>/config.json.
+  - Logs devem aparecer SIMULTANEAMENTE no terminal e no arquivo.
+
+Arquivo a Modificar: src/train.py, src/main.py
+Prioridade: MÉDIA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-06 :: SEMENTE DE REPRODUTIBILIDADE GLOBAL
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O sistema DEVE garantir reprodutibilidade completa, incluindo operações em GPU.
+
+Critérios de Aceitação:
+  - Função set_seed(seed: int) chamada no início de main() que configure:
+      random.seed(seed)
+      np.random.seed(seed)
+      torch.manual_seed(seed)
+      torch.cuda.manual_seed_all(seed)
+      torch.backends.cudnn.deterministic = True
+      torch.backends.cudnn.benchmark = False
+  - seed configurável via CLI (--seed, default=42).
+
+Arquivo a Modificar: src/main.py (nova função set_seed)
+Prioridade: MÉDIA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-07 :: ESTATÍSTICAS DE NORMALIZAÇÃO CALIBRADAS PARA O EUROSAT
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O pré-processamento DEVE usar estatísticas de normalização calculadas sobre
+  o próprio dataset EuroSAT, em vez das estatísticas genéricas do ImageNet.
+
+Critérios de Aceitação:
+  - Script utilitário src/compute_stats.py que computa a média e desvio padrão
+    por canal (R, G, B) sobre o conjunto de treinamento do EuroSAT.
+  - Valores calculados salvos em ./data/eurosat_stats.json.
+  - dataset.py carrega os valores de eurosat_stats.json se o arquivo existir,
+    com fallback para os valores ImageNet caso contrário.
+  - Valores de referência esperados (para documentação):
+    EuroSAT RGB Mean ≈ [0.3444, 0.3803, 0.4078]
+    EuroSAT RGB Std  ≈ [0.2027, 0.1369, 0.1150]
+
+Arquivo a Modificar: src/dataset.py
+Arquivo Novo: src/compute_stats.py
+Prioridade: BAIXA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-08 :: ARQUITETURA SmallResNet APRIMORADA (DEEPER)
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  A SmallResNet DEVE suportar múltiplos blocos residuais por camada, permitindo
+  maior profundidade e capacidade representacional.
+
+Critérios de Aceitação:
+  - _make_layer(out_channels, num_blocks, stride) aceita parâmetro num_blocks.
+  - Configuração padrão v2.0: layer1(32, 2, 1), layer2(64, 2, 2), layer3(128, 2, 2)
+    totalizando 6 blocos residuais (vs. 3 na v1.0).
+  - Backward compatibility: num_blocks=1 produz comportamento idêntico à v1.0.
+  - Parâmetro --num-blocks na CLI.
+
+Arquivo a Modificar: src/models.py
+Prioridade: MÉDIA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-09 :: MODO DE INFERÊNCIA (PREDICT)
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O sistema DEVE oferecer um script dedicado para inferência em imagens avulsas
+  (fora do dataset EuroSAT), usando um checkpoint salvo.
+
+Critérios de Aceitação:
+  - Script: src/predict.py
+  - Argumentos: --checkpoint <path.pth> --image <path/to/image.jpg> [--topk 3]
+  - Saída no terminal: classe predita, probabilidade e Top-K alternativas.
+  - Suporte a imagens JPEG/PNG com redimensionamento e normalização automáticos.
+  - Retornar código de saída 0 em sucesso, 1 em erro.
+
+Arquivo Novo: src/predict.py
+Prioridade: MÉDIA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-10 :: RELATÓRIO AUTOMÁTICO DE EXPERIMENTO
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  Ao final de cada execução de main.py, DEVE ser gerado automaticamente um
+  relatório Markdown do experimento, pronto para consulta e documentação.
+
+Critérios de Aceitação:
+  - Arquivo gerado: ./outputs/<run_id>/relatorio_experimento.md
+  - Conteúdo mínimo:
+      * Configuração completa do experimento (hiperparâmetros, arquitetura)
+      * Tabela de métricas finais por classe
+      * Tabela comparativa de loss/acc por época (ou referência ao metrics.csv)
+      * Caminhos para imagens geradas (curvas de treino, matriz de confusão)
+      * Timestamp de início e fim, tempo total de treinamento
+  - Imagens de curva de treinamento e matriz de confusão salvas em:
+    ./outputs/<run_id>/plots/
+
+Arquivo Novo: src/reporter.py
+Arquivo a Modificar: src/main.py, src/evaluate.py
+Prioridade: BAIXA
+
+────────────────────────────────────────────────────────────────────────────────
+RF-11 :: CORREÇÃO DO requirements.txt
+────────────────────────────────────────────────────────────────────────────────
+Descrição:
+  O arquivo requirements.txt DEVE ser salvo com encoding UTF-8 correto, sem
+  caracteres nulos.
+
+Critérios de Aceitação:
+  - requirements.txt salvo como UTF-8 sem BOM.
+  - Todas as 8 dependências listadas na forma pacote>=versão legíveis.
+  - Versão do Python documentada no arquivo (comentário).
+  - Adicionadas dependências ausentes necessárias para v2.0: nenhuma nova
+    dependência de terceiros (tudo usa stdlib ou já declarado).
+
+Arquivo a Modificar: requirements.txt
+Prioridade: ALTA (bloqueador de setup do ambiente)
+
+
+================================================================================
+PARTE III — REQUISITOS NÃO FUNCIONAIS (RNF) — VERSÃO 2.0
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-01 :: DESEMPENHO MÍNIMO (META DE ACURÁCIA)
+────────────────────────────────────────────────────────────────────────────────
+  - A SmallResNet v2.0 (com early stopping, scheduler e normalização EuroSAT)
+    DEVE atingir Macro F1-Score ≥ 91.07% no conjunto de teste (manter ou superar
+    o resultado da v1.0).
+  - Meta desejável: Macro F1-Score ≥ 93% com a arquitetura deeper (RF-08).
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-02 :: REPRODUTIBILIDADE
+────────────────────────────────────────────────────────────────────────────────
+  - Dado um mesmo seed, hardware e versões de dependência, duas execuções com os
+    mesmos argumentos CLI devem produzir resultados numericamente idênticos.
+  - O arquivo config.json salvo por cada run DEVE ser suficiente para replicar
+    o experimento do zero.
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-03 :: COMPATIBILIDADE DE AMBIENTE
+────────────────────────────────────────────────────────────────────────────────
+  - Código compatível com Python ≥ 3.10.
+  - Compatível com PyTorch ≥ 2.0.0 e torchvision ≥ 0.15.0.
+  - Deve funcionar em CPU (sem GPU) com degradação apenas de velocidade.
+  - Compatível com ambiente Google Colab (arquivo .ipynb existente).
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-04 :: ORGANIZAÇÃO DE DIRETÓRIOS E CONVENÇÃO DE NOMES
+────────────────────────────────────────────────────────────────────────────────
+  Estrutura de diretórios esperada na v2.0:
+
+  Trabalho final/
+  ├── src/
+  │   ├── dataset.py        (modificado)
+  │   ├── models.py         (modificado)
+  │   ├── train.py          (modificado)
+  │   ├── evaluate.py       (modificado)
+  │   ├── main.py           (modificado)
+  │   ├── predict.py        (NOVO)
+  │   ├── reporter.py       (NOVO)
+  │   └── compute_stats.py  (NOVO)
+  ├── data/
+  │   └── eurosat_stats.json (NOVO, gerado por compute_stats.py)
+  ├── checkpoints/
+  │   └── <model>_<opt>_acc<xx.xx>.pth
+  ├── outputs/
+  │   └── <timestamp>_<model>_<opt>/
+  │       ├── config.json
+  │       ├── metrics.csv
+  │       ├── training.log
+  │       ├── relatorio_experimento.md
+  │       └── plots/
+  │           ├── training_curves.png
+  │           └── confusion_matrix.png
+  ├── requirements.txt      (corrigido)
+  └── README.md             (atualizar)
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-05 :: QUALIDADE DE CÓDIGO
+────────────────────────────────────────────────────────────────────────────────
+  - Todas as funções e classes DEVEM ter docstrings no padrão Google Style.
+  - Type hints nas assinaturas de todas as funções novas.
+  - Nenhum bloco de código comentado (dead code) deixado no repositório.
+  - Máximo de 120 caracteres por linha.
+
+────────────────────────────────────────────────────────────────────────────────
+RNF-06 :: SEGURANÇA E ROBUSTEZ
+────────────────────────────────────────────────────────────────────────────────
+  - Tratamento de exceções em operações de I/O (leitura de dados, salvamento).
+  - Validação dos argumentos CLI com mensagens de erro claras e código de saída 1.
+  - Verificação de existência do arquivo de checkpoint antes de carregar.
+
+
+================================================================================
+PARTE IV — BACKLOG FUTURO (PÓS v2.0 / Doutorado DataLuta)
+================================================================================
+
+  [FUTURO-01] Suporte a imagens multiespectrais (além do RGB) do EuroSAT-MS (13 bandas)
+  [FUTURO-02] Integração com torchvision.models para fine-tuning de EfficientNet/ViT
+  [FUTURO-03] Pipeline de inferência em batch sobre diretórios de imagens geotiff
+  [FUTURO-04] API REST (FastAPI) expondo o endpoint POST /predict para o sistema DataLuta
+  [FUTURO-05] Módulo de explicabilidade (Grad-CAM) para visualização das ativações
+  [FUTURO-06] Integração com MLflow para tracking de experimentos
+  [FUTURO-07] Exportação para ONNX para deploy em edge/servidor
+  [FUTURO-08] Cruzamento com dados LLM para detecção de irregularidades fundiárias
+
+
+================================================================================
+PARTE V — PRIORIZAÇÃO E ORDEM DE IMPLEMENTAÇÃO
+================================================================================
+
+  Sprint 1 — Fundação Crítica (Alta Prioridade):
+    [1] RF-11 :: Corrigir requirements.txt (bloqueador)
+    [2] RF-06 :: set_seed() para reprodutibilidade global
+    [3] RF-01 :: Early Stopping no loop de treinamento
+    [4] RF-02 :: Checkpoints (salvar/carregar modelos)
+    [5] RF-04 :: CLI com argparse
+
+  Sprint 2 — Qualidade e Robustez (Média Prioridade):
+    [6] RF-03 :: Learning Rate Scheduler
+    [7] RF-05 :: Logging estruturado em arquivo + CSV de métricas
+    [8] RF-08 :: SmallResNet deeper (num_blocks)
+    [9] RF-09 :: Script predict.py para inferência avulsa
+
+  Sprint 3 — Enriquecimento (Baixa Prioridade):
+    [10] RF-07 :: Estatísticas EuroSAT calibradas (compute_stats.py)
+    [11] RF-10 :: Relatório automático Markdown (reporter.py)
+    [12]       :: Atualização do README.md
+
+================================================================================
+FIM DO DOCUMENTO — requisitos versão 2.0
+Gerado em: 2026-07-04
+================================================================================
