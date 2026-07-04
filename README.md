@@ -1,5 +1,7 @@
 # Minimum Viable Product (MVP) - Machine Learning & Analytics
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/abraaonazario/rabalho-mvp-machine-learning/blob/main/MVP_CoberturaFlorestal_Colab.ipynb)
+
 **Projeto: Classificação Multiclasse de Cobertura Florestal utilizando Variáveis Cartográficas e Ambientais**
 
 Este repositório contém a infraestrutura de dados e a implementação computacional (Notebook) desenvolvida para a avaliação final da disciplina de Machine Learning & Analytics. O trabalho foi conduzido em alinhamento metodológico com a pesquisa de Doutorado intitulada **DataLuta**, cujo foco engloba o monitoramento socioterritorial e o uso do solo.
